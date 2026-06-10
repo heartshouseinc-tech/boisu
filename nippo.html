@@ -1,0 +1,1141 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#1B3A2D">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="現場日報AI">
+<title>現場日報AI｜ボイスメモ→日報自動生成</title>
+
+<!-- Firebase -->
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
+import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
+import { getFirestore, collection, addDoc, serverTimestamp }
+  from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+
+const firebaseConfig = {
+  apiKey: "AIzaSyCVk2miG5TK1ffTofXLh0hHgeSbOvmIgZ8",
+  authDomain: "kensetsu-nippo-842a2.firebaseapp.com",
+  projectId: "kensetsu-nippo-842a2",
+  storageBucket: "kensetsu-nippo-842a2.firebasestorage.app",
+  messagingSenderId: "702880974315",
+  appId: "1:702880974315:web:985321dc9180046629c5ae"
+};
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+window.__nippoFb = { auth, db, onAuthStateChanged, collection, addDoc, serverTimestamp };
+</script>
+
+<!-- jsPDF -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+<style>
+:root {
+  --ink:    #1B3A2D;
+  --ink2:   #2E5E45;
+  --ink3:   #4A7C60;
+  --mist:   #E8F2EC;
+  --mist2:  #F4F9F6;
+  --line:   #C8DDD1;
+  --amber:  #D4820A;
+  --amber2: #FDF3E3;
+  --red:    #B83232;
+  --red2:   #FDEAEA;
+  --white:  #FFFFFF;
+  --gray:   #6B8070;
+  --sb:     env(safe-area-inset-bottom, 0px);
+  --font:   'Hiragino Sans','Meiryo',sans-serif;
+}
+*,*::before,*::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; font-family: var(--font); background: var(--mist2); color: var(--ink); }
+
+/* ── HEADER ── */
+.hd {
+  background: var(--ink);
+  color: #fff;
+  padding: 12px 16px 10px;
+  display: flex; align-items: center; justify-content: space-between;
+  box-shadow: 0 2px 12px rgba(0,0,0,.25);
+  position: sticky; top: 0; z-index: 100;
+}
+.hd-left { display: flex; align-items: center; gap: 10px; }
+.hd-icon { font-size: 22px; }
+.hd-title { font-size: 16px; font-weight: 800; letter-spacing: .04em; }
+.hd-sub { font-size: 9px; color: rgba(255,255,255,.55); letter-spacing: .08em; margin-top: 1px; }
+.hd-badge {
+  font-size: 9px; font-weight: 700; padding: 3px 9px;
+  background: var(--ink2); border-radius: 20px; color: rgba(255,255,255,.8);
+  border: 1px solid rgba(255,255,255,.15);
+}
+
+/* ── TABS ── */
+.tabs {
+  display: flex; background: var(--ink2);
+  border-bottom: 2px solid var(--ink3);
+}
+.tab {
+  flex: 1; padding: 11px 4px 9px; border: none; background: transparent;
+  color: rgba(255,255,255,.55); font-size: 11px; font-weight: 600;
+  cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 3px;
+  transition: all .2s; border-bottom: 3px solid transparent; font-family: var(--font);
+}
+.tab .tic { font-size: 18px; }
+.tab.active { color: #fff; border-bottom-color: #7FD4A8; background: rgba(255,255,255,.08); }
+
+/* ── PAGES ── */
+.page { display: none; min-height: calc(100vh - 110px); }
+.page.active { display: block; }
+
+/* ── SECTION ── */
+.section { padding: 14px; }
+.card {
+  background: var(--white); border: 1px solid var(--line);
+  border-radius: 14px; padding: 16px; margin-bottom: 12px;
+  box-shadow: 0 1px 6px rgba(27,58,45,.07);
+}
+.card-title {
+  font-size: 12px; font-weight: 800; color: var(--ink2);
+  letter-spacing: .06em; margin-bottom: 14px;
+  display: flex; align-items: center; gap: 7px;
+}
+.card-title::before {
+  content: ''; display: block; width: 3px; height: 14px;
+  background: var(--ink3); border-radius: 2px; flex-shrink: 0;
+}
+
+/* ── RECORD BUTTON ── */
+.rec-center { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 10px 0 6px; }
+.rec-btn {
+  width: 88px; height: 88px; border-radius: 50%;
+  background: var(--ink); border: none; color: #fff;
+  font-size: 36px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 4px 20px rgba(27,58,45,.35);
+  transition: all .2s; position: relative; flex-shrink: 0;
+}
+.rec-btn:active { transform: scale(.93); }
+.rec-btn.recording {
+  background: var(--red);
+  box-shadow: 0 0 0 0 rgba(184,50,50,.5);
+  animation: recpulse 1.4s ease-in-out infinite;
+}
+@keyframes recpulse {
+  0%   { box-shadow: 0 0 0 0 rgba(184,50,50,.5); }
+  70%  { box-shadow: 0 0 0 20px rgba(184,50,50,0); }
+  100% { box-shadow: 0 0 0 0 rgba(184,50,50,0); }
+}
+.rec-label { font-size: 13px; font-weight: 700; color: var(--ink); }
+.rec-time { font-size: 28px; font-weight: 800; color: var(--ink); font-variant-numeric: tabular-nums; letter-spacing: .05em; }
+.rec-hint { font-size: 11px; color: var(--gray); text-align: center; line-height: 1.6; }
+
+/* ── AUDIO PREVIEW ── */
+.audio-preview { margin-top: 8px; }
+audio { width: 100%; border-radius: 8px; margin-bottom: 8px; }
+.audio-name { font-size: 11px; color: var(--gray); margin-bottom: 10px; word-break: break-all; }
+
+/* ── FILE UPLOAD ── */
+.upload-zone {
+  border: 2px dashed var(--line); border-radius: 12px; padding: 22px;
+  text-align: center; cursor: pointer; transition: all .2s; background: var(--mist2);
+}
+.upload-zone:hover, .upload-zone.drag { border-color: var(--ink3); background: var(--mist); }
+.upload-zone .uz-icon { font-size: 30px; margin-bottom: 8px; }
+.upload-zone p { font-size: 13px; color: var(--ink2); font-weight: 600; margin-bottom: 4px; }
+.upload-zone span { font-size: 11px; color: var(--gray); }
+#fileInput { display: none; }
+
+/* ── ANALYZE BUTTON ── */
+.btn-analyze {
+  width: 100%; padding: 15px; background: var(--ink); color: #fff;
+  border: none; border-radius: 12px; font-size: 15px; font-weight: 800;
+  cursor: pointer; letter-spacing: .04em; transition: all .2s;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  font-family: var(--font);
+}
+.btn-analyze:hover { background: var(--ink2); }
+.btn-analyze:disabled { background: #aaa; cursor: default; }
+.btn-analyze .spin {
+  width: 18px; height: 18px; border: 2.5px solid rgba(255,255,255,.3);
+  border-top-color: #fff; border-radius: 50%; animation: spin .7s linear infinite; display: none;
+}
+.btn-analyze.loading .spin { display: block; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── META FIELDS ── */
+.meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.fg { margin-bottom: 0; }
+.fg label { display: block; font-size: 11px; font-weight: 700; color: var(--gray); margin-bottom: 5px; }
+.fg input, .fg select, .fg textarea {
+  width: 100%; padding: 10px 12px; border: 1.5px solid var(--line);
+  border-radius: 9px; font-size: 14px; outline: none; font-family: var(--font);
+  transition: border-color .2s; background: var(--white); color: var(--ink);
+}
+.fg input:focus, .fg select:focus, .fg textarea:focus { border-color: var(--ink3); }
+.fg textarea { resize: vertical; min-height: 70px; }
+.fg-full { grid-column: 1 / -1; }
+
+/* ── PROGRESS ── */
+.progress-wrap { margin: 12px 0; display: none; }
+.progress-wrap.show { display: block; }
+.progress-bar { height: 5px; background: var(--mist); border-radius: 3px; overflow: hidden; }
+.progress-fill { height: 100%; background: var(--ink3); border-radius: 3px; transition: width .4s ease; }
+.progress-label { font-size: 11px; color: var(--gray); margin-bottom: 6px; }
+
+/* ── RESULT ── */
+.result-section { display: none; }
+.result-section.show { display: block; }
+
+.report-box {
+  background: var(--mist2); border: 1px solid var(--line);
+  border-radius: 12px; padding: 16px; margin-bottom: 12px;
+}
+.report-box h3 { font-size: 12px; font-weight: 800; color: var(--ink2); margin-bottom: 10px; letter-spacing: .05em; }
+.report-content { font-size: 13px; line-height: 1.8; color: var(--ink); white-space: pre-wrap; }
+
+.transcript-box {
+  background: #FAFAFA; border: 1px solid var(--line);
+  border-radius: 12px; padding: 14px; margin-bottom: 12px;
+}
+.transcript-box h3 { font-size: 12px; font-weight: 800; color: var(--gray); margin-bottom: 8px; letter-spacing: .05em; }
+.transcript-content { font-size: 12px; line-height: 1.9; color: #555; white-space: pre-wrap; }
+
+/* ── ACTION BUTTONS ── */
+.action-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+.action-btn {
+  padding: 13px 10px; border: none; border-radius: 11px;
+  font-size: 13px; font-weight: 700; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  transition: all .2s; font-family: var(--font);
+}
+.action-btn:active { transform: scale(.96); }
+.btn-pdf { background: var(--red2); color: var(--red); border: 1.5px solid #f0b8b8; }
+.btn-pdf:hover { background: #fad4d4; }
+.btn-chat { background: var(--mist); color: var(--ink2); border: 1.5px solid var(--line); }
+.btn-chat:hover { background: var(--mist); filter: brightness(.96); }
+.btn-drive { background: var(--amber2); color: var(--amber); border: 1.5px solid #f0d8a0; }
+.btn-drive:hover { background: #fcebbf; }
+.btn-reset { background: var(--mist2); color: var(--gray); border: 1.5px solid var(--line); }
+.btn-drive-full { grid-column: 1 / -1; }
+
+/* ── HISTORY TAB ── */
+.hist-empty { text-align: center; padding: 40px 20px; color: var(--gray); font-size: 14px; }
+.hist-item {
+  background: var(--white); border: 1px solid var(--line);
+  border-radius: 12px; padding: 14px; margin-bottom: 10px;
+  cursor: pointer; transition: all .15s;
+}
+.hist-item:active { background: var(--mist); }
+.hist-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 6px; }
+.hist-date { font-size: 11px; color: var(--gray); }
+.hist-site { font-size: 13px; font-weight: 700; color: var(--ink); }
+.hist-preview { font-size: 12px; color: var(--gray); line-height: 1.5; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.hist-actions { display: flex; gap: 7px; margin-top: 10px; flex-wrap: wrap; }
+.hist-btn {
+  padding: 6px 12px; border: none; border-radius: 7px;
+  font-size: 11px; font-weight: 700; cursor: pointer; font-family: var(--font);
+}
+.hb-pdf { background: var(--red2); color: var(--red); }
+.hb-chat { background: var(--mist); color: var(--ink2); }
+.hb-del { background: #F5F5F5; color: #999; margin-left: auto; }
+
+/* ── TOAST ── */
+.toast {
+  position: fixed; bottom: calc(20px + var(--sb)); left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  background: var(--ink); color: #fff; padding: 10px 20px;
+  border-radius: 20px; font-size: 13px; font-weight: 600;
+  opacity: 0; transition: all .3s; pointer-events: none; z-index: 999;
+  white-space: nowrap; max-width: 90vw;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.toast.ok { background: var(--ink2); }
+.toast.err { background: var(--red); }
+
+/* ── LOGIN OVERLAY ── */
+.login-overlay {
+  display: none; position: fixed; inset: 0;
+  background: var(--ink); z-index: 500;
+  align-items: center; justify-content: center; flex-direction: column; gap: 16px;
+}
+.login-overlay.show { display: flex; }
+.login-overlay p { color: rgba(255,255,255,.7); font-size: 14px; text-align: center; }
+.btn-login-google {
+  padding: 14px 28px; background: #fff; border: none; border-radius: 12px;
+  font-size: 15px; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 10px;
+  font-family: var(--font);
+}
+
+/* ── MODAL ── */
+.modal-bg {
+  display: none; position: fixed; inset: 0; background: rgba(0,0,0,.65); z-index: 400;
+  align-items: flex-end; justify-content: center;
+}
+.modal-bg.open { display: flex; }
+.modal-sheet {
+  background: var(--white); border-radius: 20px 20px 0 0;
+  width: 100%; max-height: 85vh; overflow-y: auto; padding: 20px;
+  animation: slideUp .3s ease;
+}
+@keyframes slideUp { from { transform: translateY(100%); } to { transform: none; } }
+.modal-handle { width: 36px; height: 4px; background: var(--line); border-radius: 2px; margin: 0 auto 16px; }
+.modal-title { font-size: 16px; font-weight: 800; color: var(--ink); margin-bottom: 16px; }
+.modal-close { float: right; background: none; border: none; font-size: 22px; cursor: pointer; color: var(--gray); }
+
+/* ── MISC ── */
+@media(min-width: 600px) {
+  .section { padding: 20px; max-width: 600px; margin: 0 auto; }
+}
+</style>
+</head>
+<body>
+
+<!-- LOGIN OVERLAY -->
+<div class="login-overlay" id="loginOverlay">
+  <div style="text-align:center;">
+    <div style="font-size:48px;margin-bottom:12px;">🏗️</div>
+    <div style="font-size:20px;font-weight:800;color:#fff;margin-bottom:6px;">現場日報AI</div>
+    <p>ログインしてご利用ください</p>
+  </div>
+  <a href="chat-19.html" class="btn-login-google">🔑 ログイン画面へ</a>
+</div>
+
+<!-- HEADER -->
+<div class="hd">
+  <div class="hd-left">
+    <span class="hd-icon">🎙️</span>
+    <div>
+      <div class="hd-title">現場日報AI</div>
+      <div class="hd-sub">VOICE MEMO → DAILY REPORT</div>
+    </div>
+  </div>
+  <div class="hd-badge" id="userBadge">読込中...</div>
+</div>
+
+<!-- TABS -->
+<div class="tabs">
+  <button class="tab active" id="tab-rec" onclick="switchTab('rec')">
+    <span class="tic">🎤</span>録音・入力
+  </button>
+  <button class="tab" id="tab-result" onclick="switchTab('result')">
+    <span class="tic">📋</span>日報結果
+  </button>
+  <button class="tab" id="tab-hist" onclick="switchTab('hist')">
+    <span class="tic">📁</span>履歴
+  </button>
+</div>
+
+<!-- ═══ PAGE: 録音・入力 ═══ -->
+<div class="page active" id="page-rec">
+<div class="section">
+
+  <!-- メタ情報 -->
+  <div class="card">
+    <div class="card-title">📅 現場情報</div>
+    <div class="meta-grid">
+      <div class="fg">
+        <label>日付</label>
+        <input type="date" id="metaDate">
+      </div>
+      <div class="fg">
+        <label>天気</label>
+        <select id="metaWeather">
+          <option value="晴れ">☀️ 晴れ</option>
+          <option value="曇り">☁️ 曇り</option>
+          <option value="雨">🌧️ 雨</option>
+          <option value="雪">❄️ 雪</option>
+        </select>
+      </div>
+      <div class="fg fg-full">
+        <label>現場名・場所</label>
+        <input type="text" id="metaSite" placeholder="例: ○○マンション新築工事 1号棟">
+      </div>
+      <div class="fg fg-full">
+        <label>担当者名</label>
+        <input type="text" id="metaName" placeholder="例: 山田 太郎">
+      </div>
+    </div>
+  </div>
+
+  <!-- 録音 -->
+  <div class="card">
+    <div class="card-title">🎤 音声録音</div>
+    <div class="rec-center">
+      <div class="rec-time" id="recTime">00:00</div>
+      <button class="rec-btn" id="recBtn" onclick="toggleRec()">🎤</button>
+      <div class="rec-label" id="recLabel">タップして録音開始</div>
+      <div class="rec-hint">録音後、そのまま文字起こし＆日報生成できます</div>
+    </div>
+    <div class="audio-preview" id="audioPreview" style="display:none;">
+      <audio id="audioPlayer" controls></audio>
+      <div class="audio-name" id="audioName"></div>
+    </div>
+  </div>
+
+  <!-- ファイル選択 -->
+  <div class="card">
+    <div class="card-title">📂 ファイルから選択</div>
+    <div class="upload-zone" id="uploadZone" onclick="document.getElementById('fileInput').click()"
+      ondragover="event.preventDefault();this.classList.add('drag')"
+      ondragleave="this.classList.remove('drag')"
+      ondrop="handleDrop(event)">
+      <div class="uz-icon">🎵</div>
+      <p>音声ファイルをタップして選択</p>
+      <span>m4a / mp3 / wav / webm / ogg 対応</span>
+    </div>
+    <input type="file" id="fileInput" accept="audio/*" onchange="handleFileSelect(event)">
+  </div>
+
+  <!-- 解析ボタン -->
+  <div class="progress-wrap" id="progressWrap">
+    <div class="progress-label" id="progressLabel">Gemini 2.5 Flash が解析中...</div>
+    <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:0%"></div></div>
+  </div>
+
+  <button class="btn-analyze" id="analyzeBtn" onclick="analyze()" disabled>
+    <span class="spin" id="analyzeSpin"></span>
+    <span id="analyzeBtnText">🤖 文字起こし・日報生成</span>
+  </button>
+
+</div>
+</div>
+
+<!-- ═══ PAGE: 結果 ═══ -->
+<div class="page" id="page-result">
+<div class="section">
+
+  <div class="result-section" id="resultSection">
+
+    <!-- 要約レポート -->
+    <div class="card">
+      <div class="card-title">📋 日報サマリー</div>
+      <div class="report-box">
+        <div class="report-content" id="reportContent">---</div>
+      </div>
+    </div>
+
+    <!-- 文字起こし全文 -->
+    <div class="card">
+      <div class="card-title">📝 文字起こし全文</div>
+      <div class="transcript-box">
+        <div class="transcript-content" id="transcriptContent">---</div>
+      </div>
+    </div>
+
+    <!-- アクションボタン -->
+    <div class="action-grid">
+      <button class="action-btn btn-pdf" onclick="downloadPDF()">📄 PDF保存</button>
+      <button class="action-btn btn-chat" onclick="postToChat()">💬 チャット投稿</button>
+      <button class="action-btn btn-drive btn-drive-full" onclick="saveToDrive()">📁 Google Driveに保存</button>
+      <button class="action-btn btn-reset" onclick="resetAll()" style="grid-column:1/-1;">🔄 新しい日報を作成</button>
+    </div>
+
+  </div>
+
+  <!-- 空状態 -->
+  <div id="resultEmpty" style="text-align:center;padding:60px 20px;color:var(--gray);">
+    <div style="font-size:48px;margin-bottom:14px;">📋</div>
+    <div style="font-size:15px;font-weight:700;margin-bottom:8px;">日報がまだありません</div>
+    <div style="font-size:13px;">録音・入力タブで音声を解析してください</div>
+  </div>
+
+</div>
+</div>
+
+<!-- ═══ PAGE: 履歴 ═══ -->
+<div class="page" id="page-hist">
+<div class="section">
+  <div id="histList"><div class="hist-empty">📁 保存済みの日報がありません</div></div>
+</div>
+</div>
+
+<!-- DETAIL MODAL -->
+<div class="modal-bg" id="detailModal">
+  <div class="modal-sheet">
+    <div class="modal-handle"></div>
+    <button class="modal-close" onclick="closeModal()">✕</button>
+    <div class="modal-title" id="detailTitle">日報詳細</div>
+    <div style="font-size:12px;font-weight:800;color:var(--gray);margin-bottom:8px;">📋 サマリー</div>
+    <div style="font-size:13px;line-height:1.8;white-space:pre-wrap;margin-bottom:16px;color:var(--ink);" id="detailReport"></div>
+    <div style="font-size:12px;font-weight:800;color:var(--gray);margin-bottom:8px;">📝 全文</div>
+    <div style="font-size:12px;line-height:1.9;white-space:pre-wrap;color:#555;background:#FAFAFA;border-radius:10px;padding:12px;" id="detailTranscript"></div>
+    <div style="display:flex;gap:10px;margin-top:16px;">
+      <button class="action-btn btn-pdf" style="flex:1;" onclick="downloadPDFFromModal()">📄 PDF</button>
+      <button class="action-btn btn-chat" style="flex:1;" onclick="postToChatFromModal()">💬 チャット</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ══════════════════════════════════════════
+// CONFIG
+// ══════════════════════════════════════════
+const FUNCTIONS_BASE = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
+  ? 'http://localhost:5001/kensetsu-nippo-842a2/us-central1'
+  : 'https://us-central1-kensetsu-nippo-842a2.cloudfunctions.net';
+const ACCESS_KEY = 'HH-2026-kensetsu-daiku';
+const CHAT_ROOM_ID = 'general'; // 投稿先ルーム
+
+// ══════════════════════════════════════════
+// STATE
+// ══════════════════════════════════════════
+const S = {
+  user: null,
+  audioBlob: null,
+  audioBase64: null,
+  audioMime: 'audio/webm',
+  transcript: '',
+  report: '',
+  metaDate: '',
+  metaSite: '',
+  metaName: '',
+  metaWeather: '',
+  history: JSON.parse(localStorage.getItem('nippo_history') || '[]'),
+  // recorder
+  mediaRecorder: null,
+  recChunks: [],
+  recInterval: null,
+  recSec: 0,
+  isRecording: false,
+  // modal
+  modalItem: null,
+};
+
+// ══════════════════════════════════════════
+// FIREBASE INIT
+// ══════════════════════════════════════════
+document.addEventListener('DOMContentLoaded', () => {
+  // Default date = today
+  const today = new Date();
+  document.getElementById('metaDate').value = today.toISOString().slice(0, 10);
+
+  const fb = window.__nippoFb;
+  if (!fb) { showOverlay(); return; }
+
+  fb.onAuthStateChanged(fb.auth, user => {
+    if (user) {
+      S.user = user;
+      const name = user.displayName || user.email?.split('@')[0] || 'ゲスト';
+      document.getElementById('userBadge').textContent = name;
+      document.getElementById('metaName').value = name;
+      document.getElementById('loginOverlay').classList.remove('show');
+    } else {
+      document.getElementById('loginOverlay').classList.add('show');
+    }
+  });
+
+  renderHistory();
+});
+
+function showOverlay() {
+  document.getElementById('loginOverlay').classList.add('show');
+}
+
+// ══════════════════════════════════════════
+// TAB SWITCH
+// ══════════════════════════════════════════
+function switchTab(tab) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById('tab-' + tab).classList.add('active');
+  document.getElementById('page-' + tab).classList.add('active');
+  if (tab === 'hist') renderHistory();
+}
+
+// ══════════════════════════════════════════
+// RECORDING
+// ══════════════════════════════════════════
+async function toggleRec() {
+  if (S.isRecording) {
+    stopRec();
+  } else {
+    await startRec();
+  }
+}
+
+async function startRec() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+      ? 'audio/webm;codecs=opus'
+      : MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : 'audio/webm';
+    S.audioMime = mimeType.split(';')[0];
+    S.mediaRecorder = new MediaRecorder(stream, { mimeType });
+    S.recChunks = [];
+    S.recSec = 0;
+
+    S.mediaRecorder.ondataavailable = e => { if (e.data.size > 0) S.recChunks.push(e.data); };
+    S.mediaRecorder.onstop = () => {
+      const blob = new Blob(S.recChunks, { type: S.audioMime });
+      S.audioBlob = blob;
+      stream.getTracks().forEach(t => t.stop());
+      const url = URL.createObjectURL(blob);
+      const player = document.getElementById('audioPlayer');
+      player.src = url;
+      document.getElementById('audioPreview').style.display = 'block';
+      document.getElementById('audioName').textContent = `録音データ (${fmt(S.recSec)})`;
+      blobToBase64(blob).then(b64 => {
+        S.audioBase64 = b64;
+        document.getElementById('analyzeBtn').disabled = false;
+      });
+      showToast('録音完了 ✅', 'ok');
+    };
+
+    S.mediaRecorder.start(1000);
+    S.isRecording = true;
+    document.getElementById('recBtn').classList.add('recording');
+    document.getElementById('recBtn').textContent = '⏹';
+    document.getElementById('recLabel').textContent = '録音中... タップで停止';
+
+    S.recInterval = setInterval(() => {
+      S.recSec++;
+      document.getElementById('recTime').textContent = fmt(S.recSec);
+    }, 1000);
+  } catch (e) {
+    showToast('マイクのアクセスを許可してください', 'err');
+  }
+}
+
+function stopRec() {
+  if (S.mediaRecorder && S.isRecording) {
+    S.mediaRecorder.stop();
+    S.isRecording = false;
+    clearInterval(S.recInterval);
+    document.getElementById('recBtn').classList.remove('recording');
+    document.getElementById('recBtn').textContent = '🎤';
+    document.getElementById('recLabel').textContent = 'タップして録音開始';
+  }
+}
+
+function fmt(s) {
+  const m = String(Math.floor(s / 60)).padStart(2, '0');
+  const ss = String(s % 60).padStart(2, '0');
+  return `${m}:${ss}`;
+}
+
+// ══════════════════════════════════════════
+// FILE SELECT
+// ══════════════════════════════════════════
+function handleFileSelect(e) {
+  const file = e.target.files[0];
+  if (file) loadAudioFile(file);
+}
+
+function handleDrop(e) {
+  e.preventDefault();
+  document.getElementById('uploadZone').classList.remove('drag');
+  const file = e.dataTransfer.files[0];
+  if (file && file.type.startsWith('audio/')) loadAudioFile(file);
+  else showToast('音声ファイルを選択してください', 'err');
+}
+
+function loadAudioFile(file) {
+  S.audioBlob = file;
+  S.audioMime = file.type || 'audio/mpeg';
+  const url = URL.createObjectURL(file);
+  document.getElementById('audioPlayer').src = url;
+  document.getElementById('audioPreview').style.display = 'block';
+  document.getElementById('audioName').textContent = file.name + ' (' + Math.round(file.size / 1024) + ' KB)';
+  blobToBase64(file).then(b64 => {
+    S.audioBase64 = b64;
+    document.getElementById('analyzeBtn').disabled = false;
+  });
+  showToast('ファイル読み込み完了', 'ok');
+}
+
+function blobToBase64(blob) {
+  return new Promise(resolve => {
+    const reader = new FileReader();
+    reader.onload = e => resolve(e.target.result.split(',')[1]);
+    reader.readAsDataURL(blob);
+  });
+}
+
+// ══════════════════════════════════════════
+// ANALYZE (文字起こし + 日報生成)
+// ══════════════════════════════════════════
+async function analyze() {
+  if (!S.audioBase64) { showToast('音声データがありません', 'err'); return; }
+
+  const btn = document.getElementById('analyzeBtn');
+  btn.disabled = true;
+  btn.classList.add('loading');
+  document.getElementById('analyzeBtnText').textContent = '解析中...';
+
+  const pw = document.getElementById('progressWrap');
+  const pf = document.getElementById('progressFill');
+  const pl = document.getElementById('progressLabel');
+  pw.classList.add('show');
+
+  // Meta
+  S.metaDate = document.getElementById('metaDate').value || new Date().toISOString().slice(0, 10);
+  S.metaSite = document.getElementById('metaSite').value || '現場';
+  S.metaName = document.getElementById('metaName').value || '担当者';
+  S.metaWeather = document.getElementById('metaWeather').value;
+
+  try {
+    // STEP 1: 文字起こし
+    pl.textContent = '① 音声を文字起こし中 (Gemini 2.5 Flash)...';
+    pf.style.width = '20%';
+
+    const transcriptPrompt = `以下の音声を正確に文字起こしして全文テキストで返してください。
+建設現場の作業報告・打ち合わせの音声です。
+専門用語や固有名詞も可能な限り正確に書き起こしてください。
+話し言葉をそのまま出力してください。`;
+
+    const transcriptResult = await callAudioAI(transcriptPrompt, S.audioBase64, S.audioMime);
+    S.transcript = transcriptResult;
+
+    pf.style.width = '55%';
+    pl.textContent = '② 日報レポートを生成中...';
+
+    // STEP 2: 日報生成
+    const reportPrompt = `以下は建設現場の音声文字起こしです。
+これをもとに構造化された現場日報サマリーを作成してください。
+
+【現場情報】
+- 日付: ${S.metaDate}
+- 現場名: ${S.metaSite}
+- 担当者: ${S.metaName}
+- 天気: ${S.metaWeather}
+
+【文字起こし】
+${S.transcript}
+
+以下のフォーマットで日報を作成してください（必ず各見出しを含めること）：
+
+■ 本日の作業内容
+（実施した作業を箇条書きで）
+
+■ 作業進捗・出来高
+（進捗状況や数量）
+
+■ 安全・品質事項
+（安全確認・品質チェック内容）
+
+■ 問題点・課題
+（発生した問題、懸念事項）
+
+■ 明日の予定・指示事項
+（翌日の作業予定や担当への指示）
+
+■ 特記事項
+（その他重要な情報）
+
+文字起こしに情報が不足している項目は「記録なし」と記載してください。`;
+
+    const reportResult = await callAI(reportPrompt);
+    S.report = reportResult;
+
+    pf.style.width = '100%';
+    pl.textContent = '✅ 完了';
+
+    // 表示
+    document.getElementById('reportContent').textContent = S.report;
+    document.getElementById('transcriptContent').textContent = S.transcript;
+    document.getElementById('resultSection').classList.add('show');
+    document.getElementById('resultEmpty').style.display = 'none';
+
+    // 履歴保存
+    saveToHistory();
+
+    setTimeout(() => {
+      pw.classList.remove('show');
+      switchTab('result');
+      showToast('日報生成完了 ✅', 'ok');
+    }, 600);
+
+  } catch (e) {
+    showToast('エラー: ' + e.message, 'err');
+    pw.classList.remove('show');
+  }
+
+  btn.disabled = false;
+  btn.classList.remove('loading');
+  document.getElementById('analyzeBtnText').textContent = '🤖 文字起こし・日報生成';
+}
+
+// ══════════════════════════════════════════
+// API CALLS
+// ══════════════════════════════════════════
+async function callAudioAI(prompt, base64, mimeType) {
+  const body = {
+    prompt,
+    model: 'gemini-2.5-flash',
+    useSearch: false,
+    useUrl: false,
+    mediaContents: [{ type: mimeType, base64: base64 }]
+  };
+  const r = await fetch(FUNCTIONS_BASE + '/askClaude', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Access-Key': ACCESS_KEY },
+    body: JSON.stringify(body)
+  });
+  if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e?.error?.message || r.status); }
+  const d = await r.json();
+  return d?.candidates?.[0]?.content?.parts?.[0]?.text || d?.text || d?.result || '応答なし';
+}
+
+async function callAI(prompt) {
+  const body = {
+    prompt,
+    model: 'gemini-2.5-flash',
+    useSearch: false,
+    useUrl: false
+  };
+  const r = await fetch(FUNCTIONS_BASE + '/askClaude', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Access-Key': ACCESS_KEY },
+    body: JSON.stringify(body)
+  });
+  if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e?.error?.message || r.status); }
+  const d = await r.json();
+  return d?.candidates?.[0]?.content?.parts?.[0]?.text || d?.text || d?.result || '応答なし';
+}
+
+// ══════════════════════════════════════════
+// PDF DOWNLOAD
+// ══════════════════════════════════════════
+function downloadPDF(item) {
+  const report  = item ? item.report  : S.report;
+  const transcript = item ? item.transcript : S.transcript;
+  const date    = item ? item.date    : S.metaDate;
+  const site    = item ? item.site    : S.metaSite;
+  const name    = item ? item.name    : S.metaName;
+  const weather = item ? item.weather : S.metaWeather;
+
+  if (!report) { showToast('日報データがありません', 'err'); return; }
+
+  try {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+
+    // Use built-in font (Latin only — for Japanese we embed text as-is)
+    doc.setFont('helvetica', 'bold');
+
+    const margin = 18;
+    const pageW = 210;
+    const contentW = pageW - margin * 2;
+    let y = 18;
+
+    // ── Header bar ──
+    doc.setFillColor(27, 58, 45);
+    doc.rect(0, 0, 210, 28, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(16);
+    doc.text('Genba Nippo / Daily Report', margin, 13);
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.text('Construction Site Daily Report - AI Generated', margin, 20);
+    y = 36;
+
+    // ── Meta info ──
+    doc.setTextColor(27, 58, 45);
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'bold');
+    doc.text('DATE: ' + date + '  /  SITE: ' + site + '  /  PERSON: ' + name + '  /  WEATHER: ' + weather, margin, y);
+    y += 5;
+    doc.setDrawColor(200, 221, 209);
+    doc.setLineWidth(0.5);
+    doc.line(margin, y, pageW - margin, y);
+    y += 8;
+
+    // ── Report ──
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(46, 94, 69);
+    doc.text('SUMMARY REPORT', margin, y);
+    y += 6;
+
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(30, 30, 30);
+    doc.setFontSize(9);
+
+    // Split text for wrapping - use ASCII-safe version for PDF
+    const reportLines = doc.splitTextToSize(report, contentW);
+    reportLines.forEach(line => {
+      if (y > 265) { doc.addPage(); y = 20; }
+      doc.text(line, margin, y);
+      y += 5;
+    });
+
+    y += 6;
+    doc.setDrawColor(200, 221, 209);
+    doc.line(margin, y, pageW - margin, y);
+    y += 8;
+
+    // ── Transcript ──
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(46, 94, 69);
+    doc.text('FULL TRANSCRIPT', margin, y);
+    y += 6;
+
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(80, 80, 80);
+    doc.setFontSize(8);
+    const transLines = doc.splitTextToSize(transcript, contentW);
+    transLines.forEach(line => {
+      if (y > 275) { doc.addPage(); y = 20; }
+      doc.text(line, margin, y);
+      y += 4.5;
+    });
+
+    // ── Footer ──
+    const pageCount = doc.internal.getNumberOfPages();
+    for (let i = 1; i <= pageCount; i++) {
+      doc.setPage(i);
+      doc.setFontSize(8);
+      doc.setTextColor(150);
+      doc.text('Generated by Genba Nippo AI  |  Page ' + i + '/' + pageCount, margin, 290);
+      doc.text(new Date().toLocaleString('ja-JP'), pageW - margin, 290, { align: 'right' });
+    }
+
+    const filename = `nippo_${date}_${site.replace(/\s/g, '_')}.pdf`;
+    doc.save(filename);
+    showToast('PDF保存完了 📄', 'ok');
+  } catch (e) {
+    showToast('PDF生成エラー: ' + e.message, 'err');
+  }
+}
+
+// ══════════════════════════════════════════
+// POST TO CHAT (Firestore)
+// ══════════════════════════════════════════
+async function postToChat(item) {
+  const report   = item ? item.report  : S.report;
+  const date     = item ? item.date    : S.metaDate;
+  const site     = item ? item.site    : S.metaSite;
+  const name     = item ? item.name    : S.metaName;
+  const weather  = item ? item.weather : S.metaWeather;
+
+  if (!report) { showToast('日報データがありません', 'err'); return; }
+  if (!S.user) { showToast('ログインが必要です', 'err'); return; }
+
+  const fb = window.__nippoFb;
+  const text = `【現場日報 ${date}】${site} - ${name}\n天気: ${weather}\n\n${report}`;
+  try {
+    await fb.addDoc(
+      fb.collection(fb.db, 'rooms', CHAT_ROOM_ID, 'messages'),
+      {
+        uid: S.user.uid,
+        name: name,
+        photoURL: S.user.photoURL || '',
+        text,
+        imageData: '',
+        createdAt: fb.serverTimestamp(),
+        readBy: [S.user.uid]
+      }
+    );
+    showToast('チャットに投稿しました 💬', 'ok');
+  } catch (e) {
+    showToast('投稿失敗: ' + e.message, 'err');
+  }
+}
+
+// ══════════════════════════════════════════
+// GOOGLE DRIVE SAVE
+// ══════════════════════════════════════════
+function saveToDrive() {
+  const report = S.report;
+  const transcript = S.transcript;
+  if (!report) { showToast('日報データがありません', 'err'); return; }
+
+  // Build text content
+  const content = `現場日報 AI生成レポート
+====================
+日付: ${S.metaDate}
+現場: ${S.metaSite}
+担当: ${S.metaName}
+天気: ${S.metaWeather}
+生成日時: ${new Date().toLocaleString('ja-JP')}
+
+== サマリー ==
+${report}
+
+== 文字起こし全文 ==
+${transcript}
+`;
+
+  // Encode to base64
+  const b64 = btoa(unescape(encodeURIComponent(content)));
+  const filename = `nippo_${S.metaDate}_${S.metaSite.replace(/\s/g, '_')}.txt`;
+
+  // Open Google Drive upload via picker
+  // First check if we have gapi, otherwise use simple download + manual upload
+  if (window.gapi && window.gapi.client) {
+    uploadToDriveAPI(b64, filename);
+  } else {
+    // Fallback: initiate OAuth flow
+    initDriveUpload(content, filename);
+  }
+}
+
+function initDriveUpload(content, filename) {
+  // Use Google OAuth implicit flow
+  const clientId = ''; // ← Google Cloud Console で OAuth Client ID を設定
+  if (!clientId) {
+    // Fallback: download as file + show instruction
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    showToast('テキスト保存 → Driveへ手動アップロードしてください', 'ok');
+    return;
+  }
+
+  const scope = 'https://www.googleapis.com/auth/drive.file';
+  const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(location.href)}&response_type=token&scope=${encodeURIComponent(scope)}`;
+  localStorage.setItem('nippo_drive_pending', JSON.stringify({ content, filename }));
+  window.location.href = authUrl;
+}
+
+// OAuth redirect handler
+(function checkDriveCallback() {
+  const hash = location.hash;
+  if (hash.includes('access_token')) {
+    const params = new URLSearchParams(hash.slice(1));
+    const token = params.get('access_token');
+    const pending = JSON.parse(localStorage.getItem('nippo_drive_pending') || 'null');
+    if (token && pending) {
+      localStorage.removeItem('nippo_drive_pending');
+      history.replaceState(null, '', location.pathname);
+      uploadFileToDrive(token, pending.content, pending.filename);
+    }
+  }
+})();
+
+async function uploadFileToDrive(token, content, filename) {
+  const metadata = { name: filename, mimeType: 'text/plain' };
+  const body = new FormData();
+  body.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+  body.append('file', new Blob([content], { type: 'text/plain' }));
+  try {
+    const r = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token },
+      body
+    });
+    if (r.ok) {
+      showToast('Google Driveに保存しました 📁', 'ok');
+    } else {
+      throw new Error('Drive API error');
+    }
+  } catch (e) {
+    showToast('Drive保存失敗: ' + e.message, 'err');
+  }
+}
+
+// ══════════════════════════════════════════
+// HISTORY
+// ══════════════════════════════════════════
+function saveToHistory() {
+  const item = {
+    id: Date.now(),
+    date: S.metaDate,
+    site: S.metaSite,
+    name: S.metaName,
+    weather: S.metaWeather,
+    report: S.report,
+    transcript: S.transcript,
+    savedAt: new Date().toLocaleString('ja-JP')
+  };
+  S.history.unshift(item);
+  if (S.history.length > 50) S.history = S.history.slice(0, 50);
+  localStorage.setItem('nippo_history', JSON.stringify(S.history));
+}
+
+function renderHistory() {
+  const list = document.getElementById('histList');
+  if (!S.history.length) {
+    list.innerHTML = '<div class="hist-empty">📁 保存済みの日報がありません</div>';
+    return;
+  }
+  list.innerHTML = S.history.map((item, idx) => `
+    <div class="hist-item" onclick="openDetailModal(${idx})">
+      <div class="hist-top">
+        <div class="hist-site">${esc(item.site || '現場名なし')}</div>
+        <div class="hist-date">${esc(item.date || '')} ${item.weather ? '/ ' + esc(item.weather) : ''}</div>
+      </div>
+      <div class="hist-preview">${esc((item.report || '').substring(0, 100))}</div>
+      <div class="hist-actions" onclick="event.stopPropagation()">
+        <button class="hist-btn hb-pdf" onclick="downloadPDF(S.history[${idx}])">📄 PDF</button>
+        <button class="hist-btn hb-chat" onclick="postToChat(S.history[${idx}])">💬 チャット</button>
+        <button class="hist-btn hb-del" onclick="deleteHistory(${idx})">削除</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function deleteHistory(idx) {
+  if (!confirm('この日報を削除しますか？')) return;
+  S.history.splice(idx, 1);
+  localStorage.setItem('nippo_history', JSON.stringify(S.history));
+  renderHistory();
+  showToast('削除しました');
+}
+
+function openDetailModal(idx) {
+  const item = S.history[idx];
+  S.modalItem = item;
+  document.getElementById('detailTitle').textContent = `📋 ${item.date} ${item.site}`;
+  document.getElementById('detailReport').textContent = item.report;
+  document.getElementById('detailTranscript').textContent = item.transcript;
+  document.getElementById('detailModal').classList.add('open');
+}
+
+function closeModal() {
+  document.getElementById('detailModal').classList.remove('open');
+  S.modalItem = null;
+}
+
+document.getElementById('detailModal').addEventListener('click', e => {
+  if (e.target === document.getElementById('detailModal')) closeModal();
+});
+
+function downloadPDFFromModal() { if (S.modalItem) downloadPDF(S.modalItem); }
+function postToChatFromModal() { if (S.modalItem) postToChat(S.modalItem); }
+
+// ══════════════════════════════════════════
+// RESET
+// ══════════════════════════════════════════
+function resetAll() {
+  S.audioBlob = null;
+  S.audioBase64 = null;
+  S.transcript = '';
+  S.report = '';
+  document.getElementById('audioPreview').style.display = 'none';
+  document.getElementById('audioPlayer').src = '';
+  document.getElementById('analyzeBtn').disabled = true;
+  document.getElementById('recTime').textContent = '00:00';
+  document.getElementById('resultSection').classList.remove('show');
+  document.getElementById('resultEmpty').style.display = '';
+  document.getElementById('progressWrap').classList.remove('show');
+  const today = new Date().toISOString().slice(0, 10);
+  document.getElementById('metaDate').value = today;
+  switchTab('rec');
+  showToast('リセットしました');
+}
+
+// ══════════════════════════════════════════
+// UTILS
+// ══════════════════════════════════════════
+let toastTimer;
+function showToast(msg, type = '') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'toast show' + (type ? ' ' + type : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
+}
+
+function esc(s) {
+  return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+</script>
+</body>
+</html>
